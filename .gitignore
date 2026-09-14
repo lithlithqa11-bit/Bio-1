@@ -16,11 +16,14 @@ ENV/
 # Git portable binaries
 tools/git/
 
-# Docking runs: keep .gitkeep and the verified pilot run, ignore temporary runs
+# Docking runs: keep .gitkeep, ignore all run outputs
 docking_runs/*
 !docking_runs/.gitkeep
-!docking_runs/pilot_1M17_repaired_20260906_184129_d1b2dd/
 runs/
+
+# IDE and temporary agent folders
+.gemini/
+.agents/
 
 # Temporary and log files
 *.log
