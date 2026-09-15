@@ -1169,7 +1169,7 @@ def _render_matched_comparison_ui(vina_ver: str, is_advanced_mode: bool = False)
                     st.session_state["matched_comparison_result"] = comp_result
                     st.success("✅ اكتملت المقارنة بنجاح!")
                 except Exception as e:
-                    st.error(f"فشلت المقارنة: {e}")
+                    st.error(f": {e}")
 
         comp = st.session_state.get("matched_comparison_result")
         if comp:

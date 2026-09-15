@@ -2,6 +2,7 @@
 import datetime
 from pathlib import Path
 from docking.models import GridBox, PoseCluster
+from docking.engine import get_vina_version
 from docking.storage import (
     create_run_directory,
     write_initial_manifest,
