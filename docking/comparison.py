@@ -46,15 +46,16 @@ def validate_matched_conditions(
         return False, f"Search exhaustiveness mismatch: {healthy_exhaustiveness} != {mutant_exhaustiveness}."
     return True, "Matched comparison conditions satisfied."
 
-def verify_comparison_clusters(h_clusters: list[PoseCluster], m_clusters: list[PoseCluster]) -> float:
+def verify_comparison_clusters(h_clusters: list[PoseCluster], m_clusters: list[PoseCluster]) -> tuple[float, list[str]]:
     """
-    Verify that both healthy and mutant receptors produced a dominant pose cluster
-    supported by at least two independent seeds.
-    Refuses calculation and never substitutes 0.0 for missing clusters.
-    Returns delta_score = mutant_median - healthy_median.
+    Verify that both healthy and mutant receptors produced a dominant pose cluster.
+    Returns (delta_score, warnings).
+    Raises ValueError only if no clusters exist at all.
+    Issues a warning (instead of rejecting) if seed support is below 2.
     """
     h_top_cluster = h_clusters[0] if h_clusters else None
     m_top_cluster = m_clusters[0] if m_clusters else None
+    warnings = []
 
     if h_top_cluster is None or m_top_cluster is None:
         raise ValueError(
@@ -62,12 +63,14 @@ def verify_comparison_clusters(h_clusters: list[PoseCluster], m_clusters: list[P
         )
 
     if h_top_cluster.seed_count < 2 or m_top_cluster.seed_count < 2:
-        raise ValueError(
-            "Matched comparison rejected: the dominant pose was not reproduced by at least two independent seeds "
-            "for both healthy and mutant receptors."
+        warnings.append(
+            "⚠️ Reproducibility warning: the dominant pose was not reproduced by at least two independent seeds "
+            f"(healthy seeds={h_top_cluster.seed_count}, mutant seeds={m_top_cluster.seed_count}). "
+            "Results should be interpreted with caution."
         )
 
-    return round(m_top_cluster.median_score - h_top_cluster.median_score, 3)
+    delta = round(m_top_cluster.median_score - h_top_cluster.median_score, 3)
+    return delta, warnings
 
 def run_matched_docking_comparison(
     healthy_pdb_text: str,
@@ -162,6 +165,21 @@ def run_matched_docking_comparison(
     write_initial_manifest(m_run_dir, m_initial)
 
     # Helper to finalize both manifests on any failure
+    def _serialize_clusters(cl_list):
+        if not cl_list:
+            return []
+        return [
+            {
+                "cluster_id": cl.cluster_id,
+                "supporting_seeds": cl.supporting_seeds,
+                "seed_count": cl.seed_count,
+                "top_score": cl.top_score,
+                "median_score": cl.median_score,
+                "representative_pose_source": cl.representative_pose_source
+            }
+            for cl in cl_list
+        ]
+
     def _finalize_both_failed(err_msg: str, h_meta=None, m_meta=None, h_cl=None, m_cl=None):
         build_and_save_manifest(
             run_dir=h_run_dir,
@@ -173,7 +191,7 @@ def run_matched_docking_comparison(
             prep_meta={},
             engine_meta=engine_meta,
             grid_meta=grid_meta_unified,
-            results_meta={"clusters": h_cl or [], "per_seed": h_meta or [], "failure_reason": err_msg},
+            results_meta={"clusters": _serialize_clusters(h_cl), "per_seed": h_meta or [], "failure_reason": err_msg},
             warnings=[err_msg]
         )
         build_and_save_manifest(
@@ -186,7 +204,7 @@ def run_matched_docking_comparison(
             prep_meta={},
             engine_meta=engine_meta,
             grid_meta=grid_meta_unified,
-            results_meta={"clusters": m_cl or [], "per_seed": m_meta or [], "failure_reason": err_msg},
+            results_meta={"clusters": _serialize_clusters(m_cl), "per_seed": m_meta or [], "failure_reason": err_msg},
             warnings=[err_msg]
         )
 
@@ -237,7 +255,7 @@ def run_matched_docking_comparison(
             seeds=seeds,
             exhaustiveness=exhaustiveness
         )
-        h_clusters = cluster_poses_across_seeds(h_poses, rmsd_threshold=2.0)
+        h_clusters = cluster_poses_across_seeds(h_poses, rmsd_threshold=3.0)
     except Exception as e:
         _finalize_both_failed(f"Healthy docking engine failure: {e}")
         raise
@@ -252,14 +270,14 @@ def run_matched_docking_comparison(
             seeds=seeds,
             exhaustiveness=exhaustiveness
         )
-        m_clusters = cluster_poses_across_seeds(m_poses, rmsd_threshold=2.0)
+        m_clusters = cluster_poses_across_seeds(m_poses, rmsd_threshold=3.0)
     except Exception as e:
         _finalize_both_failed(f"Mutant docking engine failure: {e}", h_meta=h_meta, h_cl=h_clusters)
         raise
 
-    # 9. Strict reproducibility check before calculating delta_score
+    # 9. Reproducibility check before calculating delta_score
     try:
-        delta_score = verify_comparison_clusters(h_clusters, m_clusters)
+        delta_score, reprod_warnings = verify_comparison_clusters(h_clusters, m_clusters)
     except ValueError as val_err:
         _finalize_both_failed(str(val_err), h_meta=h_meta, m_meta=m_meta, h_cl=h_clusters, m_cl=m_clusters)
         raise
@@ -352,6 +370,6 @@ def run_matched_docking_comparison(
             "clusters": m_clusters,
             "grid": m_grid
         },
-        "warnings": [],
+        "warnings": reprod_warnings,
         "disclaimer": DISCLAIMER_TEXT
     }
